@@ -1,6 +1,7 @@
 # standard libraries
 import abc
 import gettext
+import numbers
 import os
 import random
 import typing
@@ -8,10 +9,10 @@ import typing
 import numpy
 import numpy as np
 import scipy.ndimage
-from abtem.learn.dataset import gaussian_marker_labels
-from abtem.points import LabelledPoints, fill_rectangle
 from nion.data import Image
 from nion.utils import Geometry
+
+from .radial_functions import interpolate_radial_functions
 
 _ = gettext.gettext
 
@@ -187,6 +188,132 @@ class AmorphousSample(Sample):
         # print(f"data min/max {numpy.amin(data)} / {numpy.amax(data)}")
 
 
+class LabelledPoints:
+
+    def __init__(self, positions=None, cell=None, labels=None, dimensions=2):
+        if positions is None:
+            positions = np.zeros((0, dimensions), dtype=np.float)
+
+        positions = np.array(positions, dtype=np.float)
+
+        if (len(positions.shape) != dimensions) | (positions.shape[1] != dimensions):
+            raise RuntimeError()
+
+        self._positions = positions
+
+        if labels is None:
+            labels = np.zeros(len(positions), dtype=np.int)
+        else:
+            labels = np.array(labels).astype(np.int)
+
+        self._labels = labels
+
+        self._cell = np.zeros((dimensions, dimensions), np.float)
+
+        if cell is not None:
+            self._cell[:] = cell
+
+    def __len__(self):
+        return len(self.positions)
+
+    @property
+    def positions(self):
+        return self._positions
+
+    @property
+    def labels(self):
+        return self._labels
+
+    @property
+    def cell(self):
+        return self._cell
+
+    def repeat(self, n, m):
+        N = len(self)
+
+        n0, n1 = 0, n
+        m0, m1 = 0, m
+        new_positions = np.zeros((n * m * N, 2), dtype=np.float)
+
+        positions = self.positions.copy()
+        new_positions[:N] = self.positions
+
+        k = N
+        for i in range(n0, n1):
+            for j in range(m0, m1):
+                if i + j != 0:
+                    l = k + N
+                    new_positions[k:l] = positions + np.dot((i, j), self.cell)
+                    k = l
+
+        labels = np.tile(self.labels, (n * m,))
+        cell = self.cell.copy() * (n, m)
+        return LabelledPoints(new_positions, cell=cell, labels=labels)
+
+
+def fill_rectangle(points, extent, origin=None, margin=0., eps=1e-12):
+    if origin is None:
+        origin = np.zeros(2)
+    else:
+        origin = np.array(origin)
+
+    extent = np.array(extent)
+    original_cell = points.cell.copy()
+
+    P_inv = np.linalg.inv(original_cell)
+
+    origin_t = np.dot(origin, P_inv)
+    origin_t = origin_t % 1.0
+
+    lower_corner = np.dot(origin_t, original_cell)
+    upper_corner = lower_corner + extent
+
+    corners = np.array([[-margin - eps, -margin - eps],
+                        [upper_corner[0] + margin + eps, -margin - eps],
+                        [upper_corner[0] + margin + eps, upper_corner[1] + margin + eps],
+                        [-margin - eps, upper_corner[1] + margin + eps]])
+
+    n0, m0 = 0, 0
+    n1, m1 = 0, 0
+    for corner in corners:
+        new_n, new_m = np.ceil(np.dot(corner, P_inv)).astype(np.int)
+        n0 = max(n0, new_n)
+        m0 = max(m0, new_m)
+        new_n, new_m = np.floor(np.dot(corner, P_inv)).astype(np.int)
+        n1 = min(n1, new_n)
+        m1 = min(m1, new_m)
+
+    repeated = points.repeat(1 + n0 - n1, 1 + m0 - m1)
+
+    positions = repeated.positions.copy()
+
+    positions = positions + original_cell[0] * n1 + original_cell[1] * m1
+
+    inside = ((positions[:, 0] > lower_corner[0] - eps - margin) &
+              (positions[:, 1] > lower_corner[1] - eps - margin) &
+              (positions[:, 0] < upper_corner[0] + margin) &
+              (positions[:, 1] < upper_corner[1] + margin))
+    new_positions = positions[inside] - lower_corner
+    labels = repeated.labels[inside]
+
+    return LabelledPoints(new_positions, cell=extent, labels=labels)
+
+
+def gaussians(points, width, gpts):
+    if isinstance(gpts, numbers.Number):
+        gpts = (gpts,) * 2
+
+    gpts = np.array(gpts)
+    extent = np.diag(points.cell)
+    sampling = extent / gpts
+    markers = np.zeros(gpts)
+
+    r = np.linspace(0, 4 * width, 100)
+    values = np.exp(-r ** 2 / (2 * width ** 2))
+    interpolate_radial_functions(markers, r, values, points.positions, sampling)
+    return markers
+
+
 class GrapheneSample(Sample):
 
     def __init__(self, instrument):
@@ -216,6 +343,6 @@ class GrapheneSample(Sample):
 
         points = fill_rectangle(self._points, extent, origin, 2)
 
-        image = gaussian_marker_labels(points, .5, np.array(data.shape))
+        image = gaussians(points, .5, np.array(data.shape))
         # superposition = gaussian_superposition(self.__positions, np.array(data.shape), origin, extent, .05)
         data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 4e-10  # superposition / 2
