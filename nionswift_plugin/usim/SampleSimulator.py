@@ -311,15 +311,15 @@ def gaussians(points, width, gpts):
     r = np.linspace(0, 4 * width, 100)
     values = np.exp(-r ** 2 / (2 * width ** 2))
     interpolate_radial_functions(markers, r, values, points.positions[points.labels == 0], sampling)
-    interpolate_radial_functions(markers, r, 4.6*values, points.positions[points.labels == 1], sampling)
-    #interpolate_radial_functions(markers, r, values, points.positions, sampling)
+    interpolate_radial_functions(markers, r, 4.6 * values, points.positions[points.labels == 1], sampling)
+    # interpolate_radial_functions(markers, r, values, points.positions, sampling)
     return markers
 
 
 class GrapheneSample(Sample):
 
     def __init__(self, instrument):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'graphene.npz')
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'clean_graphene.npz')
         npzfile = np.load(path)
         self._points = LabelledPoints(positions=npzfile['positions'], labels=npzfile['labels'], cell=npzfile['cell'])
         self._instrument = instrument
@@ -351,7 +351,48 @@ class GrapheneSample(Sample):
         drift_x = drift.x
         drift_y = drift.y
 
-        self._instrument.change_stage_position(dy = drift_y, dx = drift_x)
-        
+        self._instrument.change_stage_position(dy=drift_y, dx=drift_x)
+
+        # superposition = gaussian_superposition(self.__positions, np.array(data.shape), origin, extent, .05)
+        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 4e-10  # superposition / 2
+
+
+class ContaminatedGrapheneSample(Sample):
+
+    def __init__(self, instrument):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'graphene.npz')
+        npzfile = np.load(path)
+        self._points = LabelledPoints(positions=npzfile['positions'], labels=npzfile['labels'], cell=npzfile['cell'])
+        self._instrument = instrument
+
+    @property
+    def title(self) -> str:
+        return "Contaminated Graphene"
+
+    @property
+    def features(self) -> typing.List[Feature]:
+        return list()
+
+    def plot_features(self, data: np.ndarray, offset_m: Geometry.FloatPoint, fov_size_nm: Geometry.FloatSize,
+                      extra_nm: Geometry.FloatPoint, center_nm: Geometry.FloatPoint,
+                      used_size: Geometry.IntSize) -> None:
+        left_nm = -offset_m.x * 1e9 - (fov_size_nm.width + extra_nm.x) / 2.
+        top_nm = -offset_m.y * 1e9 - (fov_size_nm.height + extra_nm.y) / 2.
+        right_nm = left_nm + fov_size_nm.width + extra_nm.x
+        bottom_nm = top_nm + fov_size_nm.height + extra_nm.y
+
+        extent = np.array([bottom_nm - top_nm, right_nm - left_nm])
+        origin = np.array([-offset_m.y, -offset_m.x]) * 1e9
+
+        points = fill_rectangle(self._points, extent, origin, 2)
+
+        image = gaussians(points, .5, np.array(data.shape))
+
+        drift = self._instrument.GetVal2D('Drift')
+        drift_x = drift.x
+        drift_y = drift.y
+
+        self._instrument.change_stage_position(dy=drift_y, dx=drift_x)
+
         # superposition = gaussian_superposition(self.__positions, np.array(data.shape), origin, extent, .05)
         data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 4e-10  # superposition / 2
