@@ -108,6 +108,7 @@ class InstrumentWidget(Widgets.CompositeWidgetBase):
         beam_current_field.bind_text(ControlBinding(instrument, "BeamCurrent", converter=Converter.PhysicalValueToStringConverter(units="pA", multiplier=1E12)))
 
         stage_position_widget = PositionWidget(ui, _("Stage"), instrument, "stage_position_m")
+        drift_widget = PositionWidget(ui, _("Drift"), instrument, "Drift")
 
         beam_shift_widget = PositionWidget(ui, _("Beam"), instrument, "beam_shift_m")
 
@@ -215,6 +216,7 @@ class InstrumentWidget(Widgets.CompositeWidgetBase):
         column.add(voltage_row)
         column.add(beam_current_row)
         column.add(stage_position_widget)
+        column.add(drift_widget)
         column.add(beam_shift_widget)
         column.add(defocus_row)
         column.add(c12_widget)

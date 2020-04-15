@@ -417,6 +417,7 @@ class Instrument(stem_controller.STEMController):
         zlp_tare_control = Control("ZLPtare")
         zlp_offset_control = Control("ZLPoffset", -20, [(zlp_tare_control, 1.0)])
         stage_position_m = Control2D("stage_position_m", ("x", "y"))
+
         beam_current = Control("BeamCurrent", 200e-12)
         # monochromator controls
         mc_exists = Control("S_MC_InsideColumn", local_value=1) # Used by tuning to check if scope has a monochromator
