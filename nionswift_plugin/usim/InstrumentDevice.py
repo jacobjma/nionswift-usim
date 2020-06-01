@@ -375,7 +375,8 @@ class Instrument(stem_controller.STEMController):
 
         # define the samples
         self.__samples = [SampleSimulator.GrapheneSample(self),
-                          SampleSimulator.ContaminatedGrapheneSample(self),
+                          SampleSimulator.DefectGrapheneSample(self),
+                          SampleSimulator.DopedGrapheneSample(self),
                           SampleSimulator.RectangleFlakeSample(self.stage_size_nm),
                           SampleSimulator.AmorphousSample()]
         self.__sample_index = 0

@@ -188,145 +188,39 @@ class AmorphousSample(Sample):
         # print(f"data min/max {numpy.amin(data)} / {numpy.amax(data)}")
 
 
-class LabelledPoints:
-
-    def __init__(self, positions=None, cell=None, labels=None, dimensions=2):
-        if positions is None:
-            positions = np.zeros((0, dimensions), dtype=np.float)
-
-        positions = np.array(positions, dtype=np.float)
-
-        if (len(positions.shape) != dimensions) | (positions.shape[1] != dimensions):
-            raise RuntimeError()
-
-        self._positions = positions
-
-        if labels is None:
-            labels = np.zeros(len(positions), dtype=np.int)
-        else:
-            labels = np.array(labels).astype(np.int)
-
-        self._labels = labels
-
-        self._cell = np.zeros((dimensions, dimensions), np.float)
-
-        if cell is not None:
-            self._cell[:] = cell
-
-    def __len__(self):
-        return len(self.positions)
-
-    @property
-    def positions(self):
-        return self._positions
-
-    @property
-    def labels(self):
-        return self._labels
-
-    @property
-    def cell(self):
-        return self._cell
-
-    def repeat(self, n, m):
-        N = len(self)
-
-        n0, n1 = 0, n
-        m0, m1 = 0, m
-        new_positions = np.zeros((n * m * N, 2), dtype=np.float)
-
-        positions = self.positions.copy()
-        new_positions[:N] = self.positions
-
-        k = N
-        for i in range(n0, n1):
-            for j in range(m0, m1):
-                if i + j != 0:
-                    l = k + N
-                    new_positions[k:l] = positions + np.dot((i, j), self.cell)
-                    k = l
-
-        labels = np.tile(self.labels, (n * m,))
-        cell = self.cell.copy() * (n, m)
-        return LabelledPoints(new_positions, cell=cell, labels=labels)
-
-
-def fill_rectangle(points, extent, origin=None, margin=0., eps=1e-12):
-    if origin is None:
-        origin = np.zeros(2)
-    else:
-        origin = np.array(origin)
-
-    extent = np.array(extent)
-    original_cell = points.cell.copy()
-
-    P_inv = np.linalg.inv(original_cell)
-
-    origin_t = np.dot(origin, P_inv)
-    origin_t = origin_t % 1.0
-
-    lower_corner = np.dot(origin_t, original_cell)
-    upper_corner = lower_corner + extent
-
-    corners = np.array([[-margin - eps, -margin - eps],
-                        [upper_corner[0] + margin + eps, -margin - eps],
-                        [upper_corner[0] + margin + eps, upper_corner[1] + margin + eps],
-                        [-margin - eps, upper_corner[1] + margin + eps]])
-
-    n0, m0 = 0, 0
-    n1, m1 = 0, 0
-    for corner in corners:
-        new_n, new_m = np.ceil(np.dot(corner, P_inv)).astype(np.int)
-        n0 = max(n0, new_n)
-        m0 = max(m0, new_m)
-        new_n, new_m = np.floor(np.dot(corner, P_inv)).astype(np.int)
-        n1 = min(n1, new_n)
-        m1 = min(m1, new_m)
-
-    repeated = points.repeat(1 + n0 - n1, 1 + m0 - m1)
-
-    positions = repeated.positions.copy()
-
-    positions = positions + original_cell[0] * n1 + original_cell[1] * m1
-
-    inside = ((positions[:, 0] > lower_corner[0] - eps - margin) &
-              (positions[:, 1] > lower_corner[1] - eps - margin) &
-              (positions[:, 0] < upper_corner[0] + margin) &
-              (positions[:, 1] < upper_corner[1] + margin))
-    new_positions = positions[inside] - lower_corner
-    labels = repeated.labels[inside]
-
-    return LabelledPoints(new_positions, cell=extent, labels=labels)
-
-
-def gaussians(points, width, gpts):
+def gaussian_superposition(points, intensities, extent, width, gpts):
     if isinstance(gpts, numbers.Number):
         gpts = (gpts,) * 2
 
     gpts = np.array(gpts)
-    extent = np.diag(points.cell)
     sampling = extent / gpts
-    markers = np.zeros(gpts)
+    image = np.zeros(gpts)
 
-    r = np.linspace(0, 4 * width, 100)
-    values = np.exp(-r ** 2 / (2 * width ** 2))
-    interpolate_radial_functions(markers, r, values, points.positions[points.labels == 0], sampling)
-    interpolate_radial_functions(markers, r, 4.6 * values, points.positions[points.labels == 1], sampling)
-    # interpolate_radial_functions(markers, r, values, points.positions, sampling)
-    return markers
+    r = np.linspace(0, 8 * width, 100)
+
+    values = np.exp(-r ** 2 / (2 * width ** 2)) + .5 * np.exp(-r ** 2 / (2 * (2 * width) ** 2))
+
+    # if values.shape == (len(r),):
+    values = values[None] * intensities[:, None]
+
+    interpolate_radial_functions(image, r, values, points, sampling)
+    # interpolate_radial_functions(markers, r, 4.6 * values, points.positions[points.labels == 1], sampling)
+    return image
 
 
-class GrapheneSample(Sample):
+class PointBasedSample(Sample):
 
-    def __init__(self, instrument):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'clean_graphene.npz')
+    def __init__(self, instrument, filename, title):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', filename)
         npzfile = np.load(path)
-        self._points = LabelledPoints(positions=npzfile['positions'], labels=npzfile['labels'], cell=npzfile['cell'])
+        self._title = title
+        self._points = npzfile['points']
+        self._intensities = npzfile['intensities']
         self._instrument = instrument
 
     @property
     def title(self) -> str:
-        return "Graphene"
+        return self._title
 
     @property
     def features(self) -> typing.List[Feature]:
@@ -335,64 +229,43 @@ class GrapheneSample(Sample):
     def plot_features(self, data: np.ndarray, offset_m: Geometry.FloatPoint, fov_size_nm: Geometry.FloatSize,
                       extra_nm: Geometry.FloatPoint, center_nm: Geometry.FloatPoint,
                       used_size: Geometry.IntSize) -> None:
-        left_nm = -offset_m.x * 1e9 - (fov_size_nm.width + extra_nm.x) / 2.
-        top_nm = -offset_m.y * 1e9 - (fov_size_nm.height + extra_nm.y) / 2.
-        right_nm = left_nm + fov_size_nm.width + extra_nm.x
-        bottom_nm = top_nm + fov_size_nm.height + extra_nm.y
-
-        extent = np.array([bottom_nm - top_nm, right_nm - left_nm])
+        extent = np.array([fov_size_nm.width + extra_nm.x, fov_size_nm.height + extra_nm.y])  # TODO : WTF is extra_nm?
         origin = np.array([-offset_m.y, -offset_m.x]) * 1e9
+        margin = 2 / 10
+        eps = 1e-12
 
-        points = fill_rectangle(self._points, extent, origin, 2)
+        points = self._points / 10 + extent / 2 - origin
+        inside = ((points[:, 0] > 0 - eps - margin) &
+                  (points[:, 1] > 0 - eps - margin) &
+                  (points[:, 0] < extent[0] + margin) &
+                  (points[:, 1] < extent[1] + margin))
 
-        image = gaussians(points, .5, np.array(data.shape))
+        points = points[inside]
+
+        intensities = self._intensities[inside]
+        image = gaussian_superposition(points, intensities, extent, .04, np.array(data.shape))
 
         drift = self._instrument.GetVal2D('Drift')
         drift_x = drift.x
         drift_y = drift.y
 
         self._instrument.change_stage_position(dy=drift_y, dx=drift_x)
-
-        # superposition = gaussian_superposition(self.__positions, np.array(data.shape), origin, extent, .05)
-        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 4e-10  # superposition / 2
+        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 8e-10
 
 
-class ContaminatedGrapheneSample(Sample):
+class GrapheneSample(PointBasedSample):
 
     def __init__(self, instrument):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'graphene.npz')
-        npzfile = np.load(path)
-        self._points = LabelledPoints(positions=npzfile['positions'], labels=npzfile['labels'], cell=npzfile['cell'])
-        self._instrument = instrument
+        super().__init__(instrument, "clean_graphene.npz", "Graphene")
 
-    @property
-    def title(self) -> str:
-        return "Contaminated Graphene"
 
-    @property
-    def features(self) -> typing.List[Feature]:
-        return list()
+class DefectGrapheneSample(PointBasedSample):
 
-    def plot_features(self, data: np.ndarray, offset_m: Geometry.FloatPoint, fov_size_nm: Geometry.FloatSize,
-                      extra_nm: Geometry.FloatPoint, center_nm: Geometry.FloatPoint,
-                      used_size: Geometry.IntSize) -> None:
-        left_nm = -offset_m.x * 1e9 - (fov_size_nm.width + extra_nm.x) / 2.
-        top_nm = -offset_m.y * 1e9 - (fov_size_nm.height + extra_nm.y) / 2.
-        right_nm = left_nm + fov_size_nm.width + extra_nm.x
-        bottom_nm = top_nm + fov_size_nm.height + extra_nm.y
+    def __init__(self, instrument):
+        super().__init__(instrument, "defect_graphene.npz", "Defect Graphene")
 
-        extent = np.array([bottom_nm - top_nm, right_nm - left_nm])
-        origin = np.array([-offset_m.y, -offset_m.x]) * 1e9
 
-        points = fill_rectangle(self._points, extent, origin, 2)
+class DopedGrapheneSample(PointBasedSample):
 
-        image = gaussians(points, .5, np.array(data.shape))
-
-        drift = self._instrument.GetVal2D('Drift')
-        drift_x = drift.x
-        drift_y = drift.y
-
-        self._instrument.change_stage_position(dy=drift_y, dx=drift_x)
-
-        # superposition = gaussian_superposition(self.__positions, np.array(data.shape), origin, extent, .05)
-        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 4e-10  # superposition / 2
+    def __init__(self, instrument):
+        super().__init__(instrument, "doped_graphene.npz", "Doped Graphene")

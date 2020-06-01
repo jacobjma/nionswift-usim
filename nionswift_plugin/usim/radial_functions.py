@@ -1,47 +1,5 @@
-from numba import jit, prange
 import numpy as np
-
-
-@jit(nopython=True)
-def check_square_overlap(corner_a, corner_b, size):
-    return not ((corner_a[0] + size < corner_b[0]) | (corner_b[0] + size < corner_a[0]) |
-                (corner_a[1] + size < corner_b[1]) | (corner_b[1] + size < corner_a[1]))
-
-
-@jit(nopython=True)
-def thread_safe_coloring(corners, size):
-    colors = np.empty(len(corners), dtype=np.int32)
-    colors[0] = 0
-    palette_size = 1
-
-    color_count = np.zeros(len(corners), dtype=np.int32)
-    color_count[0] = 1
-
-    not_adjacent = np.zeros(len(corners), dtype=np.bool_)
-
-    for i in prange(1, len(corners)):
-        not_adjacent[:] = True
-
-        for j in range(0, i):
-            overlap = check_square_overlap(corners[i], corners[j], size)
-            if overlap:
-                color = colors[j]
-                not_adjacent[color] = False
-
-        first_not_adjacent = np.searchsorted(not_adjacent, True)
-
-        if first_not_adjacent >= palette_size:
-            colors[i] = palette_size
-            color_count[palette_size] += 1
-            palette_size += 1
-
-        else:
-            available_choices = np.where(not_adjacent[:palette_size])[0]
-            color_choice = available_choices[np.argmin(color_count[available_choices])]
-            colors[i] = color_choice
-            color_count[color_choice] += 1
-
-    return colors
+from numba import jit, prange
 
 
 @jit(nopython=True, nogil=True)
@@ -97,21 +55,12 @@ def interpolation_kernel(v, r, vr, corner_positions, block_positions, x, y):
 
 
 @jit(nopython=True, nogil=True, parallel=True)
-def interpolation_kernel_parallel(v, r, vr, corner_positions, block_positions, x, y, thread_safe=True):
-    if thread_safe:
-        colors = thread_safe_coloring(corner_positions, len(x))
-
-        for color in np.unique(colors):
-            for i in prange(len(corner_positions)):
-                if colors[i] == color:
-                    interpolation_kernel(v, r, vr[i], corner_positions[i], block_positions[i], x, y)
-
-    else:
-        for i in prange(len(corner_positions)):
-            interpolation_kernel(v, r, vr[i], corner_positions[i], block_positions[i], x, y)
+def interpolation_kernel_parallel(v, r, vr, corner_positions, block_positions, x, y):
+    for i in prange(len(corner_positions)):
+        interpolation_kernel(v, r, vr[i], corner_positions[i], block_positions[i], x, y)
 
 
-def interpolate_radial_functions(array, r, values, positions, sampling, thread_safe=True):
+def interpolate_radial_functions(array, r, values, positions, sampling):
     block_margin = int(r[-1] / min(sampling))
     block_size = 2 * block_margin + 1
 
@@ -121,7 +70,4 @@ def interpolate_radial_functions(array, r, values, positions, sampling, thread_s
     x = np.linspace(0., block_size * sampling[0], block_size, endpoint=False)
     y = np.linspace(0., block_size * sampling[1], block_size, endpoint=False)
 
-    if values.shape == (len(r),):
-        values = np.tile(values, (len(corner_positions), 1))
-
-    interpolation_kernel_parallel(array, r, values, corner_positions, block_positions, x, y, thread_safe)
+    interpolation_kernel_parallel(array, r, values, corner_positions, block_positions, x, y)
