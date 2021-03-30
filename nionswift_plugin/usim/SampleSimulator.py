@@ -214,7 +214,7 @@ class PointBasedSample(Sample):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', filename)
         npzfile = np.load(path)
         self._title = title
-        self._points = npzfile['points']
+        self._points = npzfile['points'] - npzfile['points'].mean(0)
         self._intensities = npzfile['intensities']
         self._instrument = instrument
 
@@ -229,7 +229,7 @@ class PointBasedSample(Sample):
     def plot_features(self, data: np.ndarray, offset_m: Geometry.FloatPoint, fov_size_nm: Geometry.FloatSize,
                       extra_nm: Geometry.FloatPoint, center_nm: Geometry.FloatPoint,
                       used_size: Geometry.IntSize) -> None:
-        extent = np.array([fov_size_nm.width + extra_nm.x, fov_size_nm.height + extra_nm.y])  # TODO : WTF is extra_nm?
+        extent = np.array([fov_size_nm.width + extra_nm.x, fov_size_nm.height + extra_nm.y])
         origin = np.array([-offset_m.y, -offset_m.x]) * 1e9
         margin = 2 / 10
         eps = 1e-12
@@ -250,7 +250,7 @@ class PointBasedSample(Sample):
         drift_y = drift.y
 
         self._instrument.change_stage_position(dy=drift_y, dx=drift_x)
-        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 8e-10
+        data[:, :] = image * self._instrument.GetVal("BeamCurrent") / 15e-10
 
 
 class GrapheneSample(PointBasedSample):
@@ -269,3 +269,9 @@ class DopedGrapheneSample(PointBasedSample):
 
     def __init__(self, instrument):
         super().__init__(instrument, "doped_graphene.npz", "Doped Graphene")
+
+
+class hBNSample(PointBasedSample):
+
+    def __init__(self, instrument):
+        super().__init__(instrument, "hbn.npz", "hBN")
